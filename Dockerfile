@@ -13,8 +13,10 @@ RUN mvn -B clean package -DskipTests
 FROM eclipse-temurin:17-jre AS runtime
 WORKDIR /app
 
-# Запуск под непривилегированным пользователем.
-RUN useradd --system --uid 1001 walk
+# Запуск под непривилегированным пользователем + папка для логов с правами на запись.
+RUN useradd --system --uid 1001 walk \
+    && mkdir -p /app/logs \
+    && chown -R walk:walk /app
 USER walk
 
 COPY --from=build /app/target/*.jar app.jar

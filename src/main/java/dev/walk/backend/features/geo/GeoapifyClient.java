@@ -1,0 +1,132 @@
+package dev.walk.backend.features.geo;
+
+import com.fasterxml.jackson.databind.JsonNode;
+
+import dev.walk.backend.features.geo.domain.GeoCity;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
+
+import java.util.Optional;
+
+/**
+ * @author Ilya Samsonov
+ *         Клиент к Geoapify
+ */
+@Slf4j
+@Component
+public class GeoapifyClient {
+
+    private final GeoapifyProperties properties;
+    private final RestClient http;
+
+    public GeoapifyClient(GeoapifyProperties properties) {
+        this.properties = properties;
+        this.http = RestClient.builder()
+                .baseUrl(properties.baseUrl())
+                .build();
+    }
+
+    /**
+     * Возвращает название города по координатам. При отсутствии ключа, ошибке
+     * сети или пустом ответе возвращает {@link Optional#empty()} - вызывающий
+     * код сам решает, что делать (например, искать ближайший город)
+     */
+    public Optional<String> reverseCity(double lat, double lon) {
+        if (properties.apiKey() == null || properties.apiKey().isBlank()) {
+            log.warn("Geoapify API key не задан — reverse geocoding пропущен");
+            return Optional.empty();
+        }
+        try {
+            JsonNode body = http.get()
+                    .uri(uri -> uri.path("/v1/geocode/reverse")
+                            .queryParam("lat", lat)
+                            .queryParam("lon", lon)
+                            .queryParam("type", "city")
+                            .queryParam("format", "json")
+                            .queryParam("apiKey", properties.apiKey())
+                            .build())
+                    .retrieve()
+                    .body(JsonNode.class);
+
+            if (body == null) {
+                return Optional.empty();
+            }
+            JsonNode results = body.get("results");
+            if (results == null || !results.isArray() || results.isEmpty()) {
+                return Optional.empty();
+            }
+            JsonNode city = results.get(0).get("city");
+            if (city == null || city.isNull() || city.asText().isBlank()) {
+                return Optional.empty();
+            }
+            return Optional.of(city.asText());
+        } catch (Exception e) {
+            log.warn("Geoapify reverse geocoding не удался: {}", e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Ищет город по тексту (forward geocoding). Берёт лучший результат, с уклоном
+     * в сторону России. Возвращает {@link Optional#empty()} при отсутствии ключа,
+     * ошибке или если ничего не найдено
+     */
+    public Optional<GeoCity> searchCity(String query) {
+        if (properties.apiKey() == null || properties.apiKey().isBlank()) {
+            log.warn("Geoapify API key не задан — поиск города пропущен");
+            return Optional.empty();
+        }
+        try {
+            JsonNode body = http.get()
+                    .uri(uri -> uri.path("/v1/geocode/search")
+                            .queryParam("text", query)
+                            .queryParam("type", "city")
+                            .queryParam("format", "json")
+                            .queryParam("lang", "ru")
+                            .queryParam("bias", "countrycode:ru")
+                            .queryParam("limit", 1)
+                            .queryParam("apiKey", properties.apiKey())
+                            .build())
+                    .retrieve()
+                    .body(JsonNode.class);
+
+            if (body == null) {
+                return Optional.empty();
+            }
+            JsonNode results = body.get("results");
+            if (results == null || !results.isArray() || results.isEmpty()) {
+                return Optional.empty();
+            }
+            JsonNode r = results.get(0);
+
+            String name = text(r, "city");
+            if (name == null) {
+                name = text(r, "name");
+            }
+            if (name == null) {
+                name = text(r, "formatted");
+            }
+            if (name == null || !r.hasNonNull("lat") || !r.hasNonNull("lon")) {
+                return Optional.empty();
+            }
+            return Optional.of(new GeoCity(
+                    name,
+                    text(r, "country_code"),
+                    r.get("lat").asDouble(),
+                    r.get("lon").asDouble()));
+        } catch (Exception e) {
+            log.warn("Geoapify поиск города не удался: {}", e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    private static String text(JsonNode node, String field) {
+        JsonNode value = node.get(field);
+        if (value == null || value.isNull() || value.asText().isBlank()) {
+            return null;
+        }
+        return value.asText();
+    }
+}

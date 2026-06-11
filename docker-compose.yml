@@ -27,8 +27,12 @@ services:
       DB_USERNAME: ${DB_USERNAME:-walk}
       DB_PASSWORD: ${DB_PASSWORD:-walk}
       SERVER_PORT: 8080
+      GEOAPIFY_API_KEY: ${GEOAPIFY_API_KEY:-}
     ports:
       - "${APP_PORT:-8080}:8080"
+    volumes:
+      # Логи приложения доступны на хосте в ./logs (файл перезаписывается при старте)
+      - ./logs:/app/logs
 
 volumes:
   walk-pgdata:
