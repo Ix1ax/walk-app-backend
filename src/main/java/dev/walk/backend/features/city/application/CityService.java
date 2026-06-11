@@ -91,14 +91,15 @@ public class CityService {
     }
 
     /**
-     * Определяет текущий город по координатам: сначала через reverse geocoding
-     * (Geoapify), и если такого города у нас нет — ближайший из поддерживаемых
+     * Определяет текущий город по координатам через reverse geocoding.
+     * Read-through: если такого города ещё нет в БД — импортируем (как в search).
+     * Если reverse не сработал — отдаём ближайший известный город
      */
+    @Transactional
     public CityResponse current(double lat, double lon) {
-        Optional<City> byName = geoapifyClient.reverseCity(lat, lon)
-                .flatMap(repository::findByNameIgnoreCase);
-        if (byName.isPresent()) {
-            return CityResponse.from(byName.get());
+        Optional<GeoCity> geo = geoapifyClient.reverseCity(lat, lon);
+        if (geo.isPresent()) {
+            return CityResponse.from(importCity(geo.get()));
         }
         return findNearest(lat, lon)
                 .map(CityResponse::from)
@@ -107,13 +108,21 @@ public class CityService {
 
     /**
      * Ближайший к точке поддерживаемый город (в пределах
-     * {@link #MAX_NEAREST_DISTANCE_METERS}). {@link Optional#empty()}, если такого нет.
+     * {@link #MAX_NEAREST_DISTANCE_METERS}). {@link Optional#empty()}, если такого
+     * нет.
      * Используется и для определения текущего города, и для привязки мест к городу
      */
     public Optional<City> findNearest(double lat, double lon) {
         City nearest = null;
         double bestDistance = Double.MAX_VALUE;
-        for (City city : repository.findAll()) {
+        List<City> cities = repository.findAll();
+
+        if (cities.isEmpty()) {
+            current(lat, lon); // попытка импортировать город по координатам, если БД пуста
+            cities = repository.findAll(); // перечитываем уже с новым городом, если он был импортирован
+        }
+
+        for (City city : cities) {
             double distance = GeoDistance.haversineMeters(lat, lon, city.getCenterLat(), city.getCenterLon());
             if (distance < bestDistance) {
                 bestDistance = distance;

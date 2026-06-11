@@ -45,11 +45,10 @@ public class GeoapifyClient {
     }
 
     /**
-     * Возвращает название города по координатам. При отсутствии ключа, ошибке
-     * сети или пустом ответе возвращает {@link Optional#empty()} - вызывающий
-     * код сам решает, что делать (например, искать ближайший город)
+     * Возвращает город (имя, страна, центр) по координатам. При отсутствии ключа,
+     * ошибке сети или пустом ответе — {@link Optional#empty()}
      */
-    public Optional<String> reverseCity(double lat, double lon) {
+    public Optional<GeoCity> reverseCity(double lat, double lon) {
         if (properties.apiKey() == null || properties.apiKey().isBlank()) {
             log.warn("Geoapify API key не задан — reverse geocoding пропущен");
             return Optional.empty();
@@ -60,6 +59,7 @@ public class GeoapifyClient {
                             .queryParam("lat", lat)
                             .queryParam("lon", lon)
                             .queryParam("type", "city")
+                            .queryParam("lang", "ru")
                             .queryParam("format", "json")
                             .queryParam("apiKey", properties.apiKey())
                             .build())
@@ -73,11 +73,16 @@ public class GeoapifyClient {
             if (results == null || !results.isArray() || results.isEmpty()) {
                 return Optional.empty();
             }
-            JsonNode city = results.get(0).get("city");
-            if (city == null || city.isNull() || city.asText().isBlank()) {
+            JsonNode r = results.get(0);
+            String name = text(r, "city");
+            if (name == null || !r.hasNonNull("lat") || !r.hasNonNull("lon")) {
                 return Optional.empty();
             }
-            return Optional.of(city.asText());
+            return Optional.of(new GeoCity(
+                    name,
+                    text(r, "country_code"),
+                    r.get("lat").asDouble(),
+                    r.get("lon").asDouble()));
         } catch (Exception e) {
             log.warn("Geoapify reverse geocoding не удался: {}", e.getMessage());
             return Optional.empty();
