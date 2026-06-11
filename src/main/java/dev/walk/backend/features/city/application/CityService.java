@@ -20,8 +20,9 @@ import java.util.Optional;
 @Service
 public class CityService {
 
-    /** 
-     * Максимальное расстояние до центра города, при котором считаем, что пользователь "в нём" 
+    /**
+     * Максимальное расстояние до центра города, при котором считаем, что
+     * пользователь "в нём"
      */
     private static final double MAX_NEAREST_DISTANCE_METERS = 100_000;
 
@@ -58,8 +59,8 @@ public class CityService {
                 .orElseGet(List::of);
     }
 
-    /** 
-     * Сохраняет город из геокодера (или возвращает уже существующий с таким именем) 
+    /**
+     * Сохраняет город из геокодера (или возвращает уже существующий с таким именем)
      */
     private City importCity(GeoCity geo) {
         return repository.findByNameIgnoreCase(geo.name())
@@ -74,6 +75,22 @@ public class CityService {
                 });
     }
 
+    /**
+     * slug из названия
+     * при коллизии добавляет суффикс -2, -3 и т.д
+     */
+    private String uniqueSlug(String name) {
+        String base = Slugs.slugify(name);
+        if (base.isBlank()) {
+            base = "city";
+        }
+        String slug = base;
+        int counter = 2;
+        while (repository.findBySlug(slug).isPresent()) {
+            slug = base + "-" + counter++;
+        }
+        return slug;
+    }
 
     /**
      * Определяет текущий город по координатам: сначала через reverse geocoding
