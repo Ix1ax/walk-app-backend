@@ -1,6 +1,9 @@
 package dev.walk.backend.features.geo;
 
 import com.fasterxml.jackson.databind.JsonNode;
+
+import dev.walk.backend.features.geo.domain.GeoCity;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -9,7 +12,7 @@ import java.util.Optional;
 
 /**
  * @author Ilya Samsonov
- * Клиент к Geoapify
+ *         Клиент к Geoapify
  */
 @Slf4j
 @Component
@@ -112,8 +115,7 @@ public class GeoapifyClient {
                     name,
                     text(r, "country_code"),
                     r.get("lat").asDouble(),
-                    r.get("lon").asDouble()
-            ));
+                    r.get("lon").asDouble()));
         } catch (Exception e) {
             log.warn("Geoapify поиск города не удался: {}", e.getMessage());
             return Optional.empty();

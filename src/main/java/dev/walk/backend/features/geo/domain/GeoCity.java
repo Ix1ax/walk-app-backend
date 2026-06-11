@@ -1,4 +1,4 @@
-package dev.walk.backend.features.geo;
+package dev.walk.backend.features.geo.domain;
 
 /**
  * @author Ilya Samsonov

@@ -5,9 +5,11 @@ import dev.walk.backend.features.city.repository.CityRepository;
 import dev.walk.backend.features.city.api.dto.CityResponse;
 import dev.walk.backend.common.Slugs;
 import dev.walk.backend.common.exception.NotFoundException;
-import dev.walk.backend.features.geo.GeoCity;
-import dev.walk.backend.features.geo.GeoDistance;
 import dev.walk.backend.features.geo.GeoapifyClient;
+import dev.walk.backend.features.geo.domain.GeoCity;
+import dev.walk.backend.features.geo.domain.GeoDistance;
+import lombok.RequiredArgsConstructor;
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,6 +20,7 @@ import java.util.Optional;
  * @author Ilya Samsonov
  */
 @Service
+@RequiredArgsConstructor
 public class CityService {
 
     /**
@@ -28,11 +31,6 @@ public class CityService {
 
     private final CityRepository repository;
     private final GeoapifyClient geoapifyClient;
-
-    public CityService(CityRepository repository, GeoapifyClient geoapifyClient) {
-        this.repository = repository;
-        this.geoapifyClient = geoapifyClient;
-    }
 
     /**
      * Поиск городов по части названия. Пустой запрос — весь список.

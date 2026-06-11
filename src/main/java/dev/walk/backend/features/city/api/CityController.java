@@ -4,9 +4,10 @@ import dev.walk.backend.features.city.application.CityService;
 import dev.walk.backend.features.city.api.dto.CityResponse;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
+import lombok.RequiredArgsConstructor;
+
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -19,13 +20,10 @@ import java.util.List;
 @Validated
 @RestController
 @RequestMapping("/api/v1/cities")
+@RequiredArgsConstructor
 public class CityController {
 
     private final CityService service;
-
-    public CityController(CityService service) {
-        this.service = service;
-    }
 
     /**
      * Весь список поддерживаемых городов

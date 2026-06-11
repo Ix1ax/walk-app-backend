@@ -1,7 +1,7 @@
 package dev.walk.backend.features.city.api.dto;
 
 import dev.walk.backend.features.city.domain.City;
-import dev.walk.backend.features.geo.GeoPoint;
+import dev.walk.backend.features.geo.domain.GeoPoint;
 
 /**
  * @author Ilya Samsonov
