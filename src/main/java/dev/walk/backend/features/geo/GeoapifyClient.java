@@ -5,10 +5,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import dev.walk.backend.features.geo.domain.GeoCity;
 import dev.walk.backend.features.geo.domain.GeoPlace;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
+import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -27,11 +28,15 @@ public class GeoapifyClient {
 
     public GeoapifyClient(GeoapifyProperties properties) {
         this.properties = properties;
-        // SimpleClientHttpRequestFactory (HTTP/1.1) вместо дефолтного JDK HttpClient:
-        // у того под параллельными запросами всплывает TLS BUFFER_UNDERFLOW. Плюс таймауты,
-        // чтобы запрос не висел бесконечно, а падал предсказуемо
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(Duration.ofSeconds(2));
+        // JDK HttpClient, но принудительно HTTP/1.1: дефолтный RestClient берёт HTTP/2,
+        // у которого под параллельными запросами всплывает TLS BUFFER_UNDERFLOW.
+        // HTTP/1.1 это снимает, при этом клиент потокобезопасный и не договаривается о
+        // gzip (чистый JSON). Таймауты — чтобы запрос не висел, а падал предсказуемо
+        HttpClient jdkClient = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
+                .connectTimeout(Duration.ofSeconds(2))
+                .build();
+        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(jdkClient);
         factory.setReadTimeout(Duration.ofSeconds(6));
         this.http = RestClient.builder()
                 .baseUrl(properties.baseUrl())
