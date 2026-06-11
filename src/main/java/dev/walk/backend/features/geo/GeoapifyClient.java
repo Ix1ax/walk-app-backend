@@ -5,9 +5,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import dev.walk.backend.features.geo.domain.GeoCity;
 import dev.walk.backend.features.geo.domain.GeoPlace;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -25,8 +27,15 @@ public class GeoapifyClient {
 
     public GeoapifyClient(GeoapifyProperties properties) {
         this.properties = properties;
+        // SimpleClientHttpRequestFactory (HTTP/1.1) вместо дефолтного JDK HttpClient:
+        // у того под параллельными запросами всплывает TLS BUFFER_UNDERFLOW. Плюс таймауты,
+        // чтобы запрос не висел бесконечно, а падал предсказуемо
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(Duration.ofSeconds(2));
+        factory.setReadTimeout(Duration.ofSeconds(6));
         this.http = RestClient.builder()
                 .baseUrl(properties.baseUrl())
+                .requestFactory(factory)
                 .build();
     }
 
