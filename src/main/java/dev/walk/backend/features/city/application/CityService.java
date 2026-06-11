@@ -100,7 +100,17 @@ public class CityService {
         if (byName.isPresent()) {
             return CityResponse.from(byName.get());
         }
+        return findNearest(lat, lon)
+                .map(CityResponse::from)
+                .orElseThrow(() -> new NotFoundException("Город пока не поддерживается"));
+    }
 
+    /**
+     * Ближайший к точке поддерживаемый город (в пределах
+     * {@link #MAX_NEAREST_DISTANCE_METERS}). {@link Optional#empty()}, если такого нет.
+     * Используется и для определения текущего города, и для привязки мест к городу
+     */
+    public Optional<City> findNearest(double lat, double lon) {
         City nearest = null;
         double bestDistance = Double.MAX_VALUE;
         for (City city : repository.findAll()) {
@@ -110,10 +120,9 @@ public class CityService {
                 nearest = city;
             }
         }
-
         if (nearest != null && bestDistance <= MAX_NEAREST_DISTANCE_METERS) {
-            return CityResponse.from(nearest);
+            return Optional.of(nearest);
         }
-        throw new NotFoundException("Город пока не поддерживается");
+        return Optional.empty();
     }
 }

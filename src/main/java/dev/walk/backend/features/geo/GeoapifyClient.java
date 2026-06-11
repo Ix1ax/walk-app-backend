@@ -3,11 +3,13 @@ package dev.walk.backend.features.geo;
 import com.fasterxml.jackson.databind.JsonNode;
 
 import dev.walk.backend.features.geo.domain.GeoCity;
-import lombok.RequiredArgsConstructor;
+import dev.walk.backend.features.geo.domain.GeoPlace;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -119,6 +121,69 @@ public class GeoapifyClient {
         } catch (Exception e) {
             log.warn("Geoapify поиск города не удался: {}", e.getMessage());
             return Optional.empty();
+        }
+    }
+
+    /** Сколько мест запрашиваем у Geoapify за один проход */
+    private static final int FETCH_LIMIT = 50;
+
+    /**
+     * Ищет места в радиусе {@code radiusMeters} от точки по заданным категориям
+     * Geoapify. Возвращает пустой список при отсутствии ключа, ошибке или если
+     * ничего не найдено
+     */
+    public List<GeoPlace> searchPlaces(double lat, double lon, int radiusMeters, List<String> categories) {
+        if (properties.apiKey() == null || properties.apiKey().isBlank()) {
+            log.warn("Geoapify API key не задан — поиск мест пропущен");
+            return List.of();
+        }
+        try {
+            JsonNode body = http.get()
+                    .uri(uri -> uri.path("/v2/places")
+                            .queryParam("categories", String.join(",", categories))
+                            .queryParam("filter", "circle:" + lon + "," + lat + "," + radiusMeters)
+                            .queryParam("bias", "proximity:" + lon + "," + lat)
+                            .queryParam("lang", "ru")
+                            .queryParam("limit", FETCH_LIMIT)
+                            .queryParam("apiKey", properties.apiKey())
+                            .build())
+                    .retrieve()
+                    .body(JsonNode.class);
+
+            if (body == null) {
+                return List.of();
+            }
+            JsonNode features = body.get("features");
+            if (features == null || !features.isArray() || features.isEmpty()) {
+                return List.of();
+            }
+
+            List<GeoPlace> places = new ArrayList<>();
+            for (JsonNode feature : features) {
+                JsonNode props = feature.get("properties");
+                if (props == null) {
+                    continue;
+                }
+                String name = text(props, "name");
+                if (name == null || !props.hasNonNull("lat") || !props.hasNonNull("lon")) {
+                    continue; // без имени или координат место бесполезно
+                }
+                List<String> categoryNames = new ArrayList<>();
+                JsonNode cats = props.get("categories");
+                if (cats != null && cats.isArray()) {
+                    cats.forEach(c -> categoryNames.add(c.asText()));
+                }
+                places.add(new GeoPlace(
+                        text(props, "place_id"),
+                        name,
+                        categoryNames,
+                        props.get("lat").asDouble(),
+                        props.get("lon").asDouble()));
+            }
+            return places;
+        } catch (Exception e) {
+            log.warn("Geoapify поиск мест не удался: {}", e.getMessage());
+            return List.of();
         }
     }
 
