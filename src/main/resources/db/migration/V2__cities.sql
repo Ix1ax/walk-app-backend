@@ -1,5 +1,4 @@
--- Города, которые поддерживает приложение. Справочные данные: пишутся
--- миграциями (см. V3), через приложение не меняются.
+-- Города, которые поддерживает приложение
 CREATE TABLE cities (
     id           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name         VARCHAR(120)     NOT NULL,
@@ -10,5 +9,5 @@ CREATE TABLE cities (
     created_at   TIMESTAMPTZ      NOT NULL DEFAULT now()
 );
 
--- Для поиска по названию без учёта регистра (ILIKE / lower()).
+-- Для поиска по названию без учёта регистра (ILIKE / lower())
 CREATE INDEX idx_cities_name_lower ON cities (lower(name));

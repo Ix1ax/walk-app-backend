@@ -20,7 +20,9 @@ import java.util.Optional;
 @Service
 public class CityService {
 
-    /** Максимальное расстояние до центра города, при котором считаем, что пользователь «в нём». */
+    /** 
+     * Максимальное расстояние до центра города, при котором считаем, что пользователь "в нём" 
+     */
     private static final double MAX_NEAREST_DISTANCE_METERS = 100_000;
 
     private final CityRepository repository;
@@ -34,7 +36,7 @@ public class CityService {
     /**
      * Поиск городов по части названия. Пустой запрос — весь список.
      * Если в БД ничего не нашлось — ищем в Geoapify, найденный город сохраняем
-     * в БД, и дальше он отдаётся уже из базы.
+     * в БД, и дальше он отдаётся уже из базы
      */
     @Transactional
     public List<CityResponse> search(String query) {
@@ -48,7 +50,7 @@ public class CityService {
             return cities.stream().map(CityResponse::from).toList();
         }
 
-        // В БД нет — пробуем геокодер и сохраняем найденное.
+        // В БД нет — пробуем геокодер и сохраняем найденное
         return geoapifyClient.searchCity(q)
                 .map(this::importCity)
                 .map(CityResponse::from)
@@ -56,7 +58,9 @@ public class CityService {
                 .orElseGet(List::of);
     }
 
-    /** Сохраняет город из геокодера (или возвращает уже существующий с таким именем). */
+    /** 
+     * Сохраняет город из геокодера (или возвращает уже существующий с таким именем) 
+     */
     private City importCity(GeoCity geo) {
         return repository.findByNameIgnoreCase(geo.name())
                 .orElseGet(() -> {
@@ -70,25 +74,6 @@ public class CityService {
                 });
     }
 
-    /** slug из названия; при коллизии добавляет суффикс -2, -3, ... */
-    private String uniqueSlug(String name) {
-        String base = Slugs.slugify(name);
-        if (base.isBlank()) {
-            base = "city";
-        }
-        String slug = base;
-        int counter = 2;
-        while (repository.findBySlug(slug).isPresent()) {
-            slug = base + "-" + counter++;
-        }
-        return slug;
-    }
-
-    public CityResponse getBySlug(String slug) {
-        return repository.findBySlug(slug)
-                .map(CityResponse::from)
-                .orElseThrow(() -> new NotFoundException("Город не найден: " + slug));
-    }
 
     /**
      * Определяет текущий город по координатам: сначала через reverse geocoding

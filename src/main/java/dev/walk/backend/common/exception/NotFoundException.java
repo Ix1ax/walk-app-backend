@@ -3,7 +3,7 @@ package dev.walk.backend.common.exception;
 /**
  * @author Ilya Samsonov
  * Общий exception для 404
- * {@link GlobalExceptionHandler}.
+ * {@link GlobalExceptionHandler}
  */
 public class NotFoundException extends RuntimeException {
 

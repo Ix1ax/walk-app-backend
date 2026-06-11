@@ -14,7 +14,7 @@ public interface CityRepository extends JpaRepository<City, Long> {
     List<City> findAllByOrderByNameAsc();
 
     // Поиск по названию (кириллица) ИЛИ по slug (латиница) — чтобы работали
-    // и «Моск», и «Moscow».
+    // и "Моск", и "Moscow"
     List<City> findByNameContainingIgnoreCaseOrSlugContainingIgnoreCaseOrderByNameAsc(String name, String slug);
 
     Optional<City> findBySlug(String slug);

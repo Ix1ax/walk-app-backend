@@ -5,7 +5,7 @@ import java.util.Map;
 /**
  * @author Ilya Samsonov
  * Генерация slug из названия: транслитерация кириллицы в латиницу + нормализация.
- * «Нижний Новгород» → «nizhniy-novgorod».
+ * «Нижний Новгород» - «nizhniy-novgorod»
  */
 public final class Slugs {
 

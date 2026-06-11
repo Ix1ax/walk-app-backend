@@ -27,19 +27,25 @@ public class CityController {
         this.service = service;
     }
 
-    /** Весь список поддерживаемых городов. */
+    /**
+     * Весь список поддерживаемых городов
+     */
     @GetMapping
     public List<CityResponse> all() {
         return service.search(null);
     }
 
-    /** Поиск городов по части названия. {@code query} необязателен (пустой — весь список). */
+    /** 
+    * Поиск городов по части названия. {@code query} необязателен (пустой — весь список) 
+    */
     @GetMapping("/search")
     public List<CityResponse> search(@RequestParam(required = false) String query) {
         return service.search(query);
     }
 
-    /** Текущий город по координатам пользователя. */
+    /** 
+     * Текущий город по координатам пользователя 
+     */
     @GetMapping("/current")
     public CityResponse current(
             @RequestParam @DecimalMin("-90") @DecimalMax("90") double lat,
@@ -47,8 +53,5 @@ public class CityController {
         return service.current(lat, lon);
     }
 
-    @GetMapping("/{slug}")
-    public CityResponse bySlug(@PathVariable String slug) {
-        return service.getBySlug(slug);
-    }
+
 }

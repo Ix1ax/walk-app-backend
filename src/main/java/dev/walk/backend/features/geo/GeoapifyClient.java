@@ -27,7 +27,7 @@ public class GeoapifyClient {
 
     /**
      * Возвращает название города по координатам. При отсутствии ключа, ошибке
-     * сети или пустом ответе возвращает {@link Optional#empty()} — вызывающий
+     * сети или пустом ответе возвращает {@link Optional#empty()} - вызывающий
      * код сам решает, что делать (например, искать ближайший город)
      */
     public Optional<String> reverseCity(double lat, double lon) {
@@ -68,7 +68,7 @@ public class GeoapifyClient {
     /**
      * Ищет город по тексту (forward geocoding). Берёт лучший результат, с уклоном
      * в сторону России. Возвращает {@link Optional#empty()} при отсутствии ключа,
-     * ошибке или если ничего не найдено.
+     * ошибке или если ничего не найдено
      */
     public Optional<GeoCity> searchCity(String query) {
         if (properties.apiKey() == null || properties.apiKey().isBlank()) {

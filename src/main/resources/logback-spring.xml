@@ -13,7 +13,7 @@
         </encoder>
     </appender>
 
-    <!-- Запись в файл. append=false → файл перезаписывается при каждом запуске приложения -->
+    <!-- Запись в файл. append=false -> файл перезаписывается при каждом запуске приложения -->
     <appender name="FILE" class="ch.qos.logback.core.FileAppender">
         <file>${LOG_FILE}</file>
         <append>false</append>

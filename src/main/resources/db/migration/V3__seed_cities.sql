@@ -1,9 +1,9 @@
 -- Стартовый список городов. Координаты — примерный центр города.
-INSERT INTO cities (name, slug, country_code, center_lat, center_lon) VALUES
-    ('Казань',          'kazan',            'RU', 55.7961, 49.1064),
-    ('Москва',          'moscow',           'RU', 55.7558, 37.6173),
-    ('Санкт-Петербург', 'saint-petersburg', 'RU', 59.9311, 30.3609),
-    ('Екатеринбург',    'yekaterinburg',    'RU', 56.8389, 60.6057),
-    ('Новосибирск',     'novosibirsk',      'RU', 55.0084, 82.9357),
-    ('Нижний Новгород', 'nizhny-novgorod',  'RU', 56.3269, 44.0059),
-    ('Сочи',            'sochi',            'RU', 43.5855, 39.7231);
+-- INSERT INTO cities (name, slug, country_code, center_lat, center_lon) VALUES
+--     ('Казань',          'kazan',            'RU', 55.7961, 49.1064),
+--     ('Москва',          'moscow',           'RU', 55.7558, 37.6173),
+--     ('Санкт-Петербург', 'saint-petersburg', 'RU', 59.9311, 30.3609),
+--     ('Екатеринбург',    'yekaterinburg',    'RU', 56.8389, 60.6057),
+--     ('Новосибирск',     'novosibirsk',      'RU', 55.0084, 82.9357),
+--     ('Нижний Новгород', 'nizhny-novgorod',  'RU', 56.3269, 44.0059),
+--     ('Сочи',            'sochi',            'RU', 43.5855, 39.7231);
