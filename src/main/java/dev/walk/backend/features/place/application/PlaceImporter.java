@@ -44,7 +44,7 @@ public class PlaceImporter {
             log.info("Geoapify не вернул мест для lat={}, lon={}, radius={}", lat, lon, radiusMeters);
             return;
         }
-        Long cityId = cityService.findNearest(lat, lon).map(City::getId).orElse(null);
+        Long cityId = cityService.resolveCity(lat, lon).map(City::getId).orElse(null);
         int saved = 0;
         for (GeoPlace geo : found) {
             if (geo.externalId() != null && repository.existsByExternalId(geo.externalId())) {
