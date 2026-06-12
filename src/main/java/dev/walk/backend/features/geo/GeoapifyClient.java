@@ -184,6 +184,9 @@ public class GeoapifyClient {
                 if (name == null || !props.hasNonNull("lat") || !props.hasNonNull("lon")) {
                     continue; // без имени или координат место бесполезно
                 }
+                if (isClosed(props)) {
+                    continue; // в OSM помечено как закрытое/нежилое — не берём
+                }
                 List<String> categoryNames = new ArrayList<>();
                 JsonNode cats = props.get("categories");
                 if (cats != null && cats.isArray()) {
@@ -201,6 +204,40 @@ public class GeoapifyClient {
             log.warn("Geoapify поиск мест не удался: {}", e.getMessage());
             return List.of();
         }
+    }
+
+    /** Lifecycle-приставки OSM, означающие, что объект больше не действует */
+    private static final List<String> CLOSED_PREFIXES = List.of(
+            "disused:", "abandoned:", "was:", "removed:", "demolished:", "razed:", "destroyed:");
+
+    /**
+     * Помечено ли место в исходных данных OSM как закрытое/нежилое.
+     * Смотрим сырые теги Geoapify (`datasource.raw`): lifecycle-приставки и opening_hours=closed/off
+     */
+    private static boolean isClosed(JsonNode props) {
+        JsonNode datasource = props.get("datasource");
+        JsonNode raw = datasource == null ? null : datasource.get("raw");
+        if (raw == null || !raw.isObject()) {
+            return false;
+        }
+        var names = raw.fieldNames();
+        while (names.hasNext()) {
+            String key = names.next().toLowerCase();
+            if (key.equals("disused") || key.equals("abandoned")) {
+                return true;
+            }
+            for (String prefix : CLOSED_PREFIXES) {
+                if (key.startsWith(prefix)) {
+                    return true;
+                }
+            }
+        }
+        JsonNode hours = raw.get("opening_hours");
+        if (hours != null && !hours.isNull()) {
+            String v = hours.asText().toLowerCase().trim();
+            return v.equals("closed") || v.equals("off");
+        }
+        return false;
     }
 
     private static String text(JsonNode node, String field) {

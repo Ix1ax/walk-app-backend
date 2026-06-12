@@ -68,6 +68,7 @@ public class PlaceImporter {
      */
     @Transactional
     public void importArea(double lat, double lon, int cellLat, int cellLon) {
+        Instant now = Instant.now();
         Long cityId = cityService.resolveCity(lat, lon).map(City::getId).orElse(null);
         Set<String> seen = new HashSet<>();
         int saved = 0;
@@ -80,6 +81,7 @@ public class PlaceImporter {
                     continue; // уже встречали в этом проходе (категории пересекаются)
                 }
                 if (geo.externalId() != null && repository.existsByExternalId(geo.externalId())) {
+                    repository.touchLastSeen(geo.externalId(), now); // место ещё живо — освежаем
                     continue;
                 }
                 Optional<PlaceCategory> mapped = PlaceCategoryMapper.map(geo.categories());
@@ -94,6 +96,7 @@ public class PlaceImporter {
                 place.setLon(geo.lon());
                 place.setExternalId(geo.externalId());
                 place.setSource("geoapify");
+                place.setLastSeenAt(now);
                 repository.save(place);
                 saved++;
             }

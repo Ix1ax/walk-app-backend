@@ -1,5 +1,6 @@
 package dev.walk.backend.features.place.application;
 
+import dev.walk.backend.common.exception.NotFoundException;
 import dev.walk.backend.features.geo.domain.GeoDistance;
 import dev.walk.backend.features.place.api.dto.PlaceResponse;
 import dev.walk.backend.features.place.domain.Place;
@@ -9,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -52,6 +54,19 @@ public class PlaceService {
         List<Place> pool = repository.findNearby(lat, lon, radiusMeters, POOL_CAP);
         List<Place> selected = spreadByDistance(pool, lat, lon, limit);
         return selected.stream().map(p -> PlaceResponse.from(p, lat, lon)).toList();
+    }
+
+    /**
+     * Жалоба «место закрыто» — скрываем его из выдачи (soft-delete).
+     * До надёжной проверки по второму источнику (этап 3) этого достаточно
+     */
+    @Transactional
+    public void reportClosed(long id) {
+        Place place = repository.findById(id)
+                .orElseThrow(() -> new NotFoundException("Место не найдено"));
+        place.setHidden(true);
+        repository.save(place);
+        log.info("Место id={} ('{}') скрыто по жалобе «закрыто»", id, place.getName());
     }
 
     /**

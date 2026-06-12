@@ -50,6 +50,14 @@ public class Place {
     @Column(nullable = false)
     private String source;
 
+    /** Скрыто из выдачи (закрыто / пожаловались) */
+    @Column(nullable = false)
+    private boolean hidden;
+
+    /** Когда место последний раз приходило из Geoapify (для пруна «призраков») */
+    @Column(name = "last_seen_at", nullable = false)
+    private Instant lastSeenAt;
+
     @Column(name = "created_at", insertable = false, updatable = false)
     private Instant createdAt;
 }
