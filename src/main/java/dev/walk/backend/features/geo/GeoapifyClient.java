@@ -143,15 +143,12 @@ public class GeoapifyClient {
         }
     }
 
-    /** Сколько мест запрашиваем у Geoapify за один проход */
-    private static final int FETCH_LIMIT = 50;
-
     /**
      * Ищет места в радиусе {@code radiusMeters} от точки по заданным категориям
-     * Geoapify. Возвращает пустой список при отсутствии ключа, ошибке или если
-     * ничего не найдено
+     * Geoapify, не больше {@code limit} штук. Возвращает пустой список при отсутствии
+     * ключа, ошибке или если ничего не найдено
      */
-    public List<GeoPlace> searchPlaces(double lat, double lon, int radiusMeters, List<String> categories) {
+    public List<GeoPlace> searchPlaces(double lat, double lon, int radiusMeters, List<String> categories, int limit) {
         if (properties.apiKey() == null || properties.apiKey().isBlank()) {
             log.warn("Geoapify API key не задан — поиск мест пропущен");
             return List.of();
@@ -163,7 +160,7 @@ public class GeoapifyClient {
                             .queryParam("filter", "circle:" + lon + "," + lat + "," + radiusMeters)
                             .queryParam("bias", "proximity:" + lon + "," + lat)
                             .queryParam("lang", "ru")
-                            .queryParam("limit", FETCH_LIMIT)
+                            .queryParam("limit", limit)
                             .queryParam("apiKey", properties.apiKey())
                             .build())
                     .retrieve()

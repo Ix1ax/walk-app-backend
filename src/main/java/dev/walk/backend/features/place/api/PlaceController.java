@@ -28,15 +28,16 @@ public class PlaceController {
     private final PlaceService service;
 
     /**
-     * Места рядом со стартовой точкой. {@code radius} — радиус поиска в метрах,
-     * {@code limit} — максимум точек в ответе
+     * Места рядом со стартовой точкой. {@code radius} — радиус поиска в метрах.
+     * {@code limit} точек выбираются равномерно по расстоянию (и близкие, и дальние),
+     * а не просто ближайшие
      */
     @GetMapping("/nearby")
     public List<PlaceResponse> nearby(
             @RequestParam @DecimalMin("-90") @DecimalMax("90") double lat,
             @RequestParam @DecimalMin("-180") @DecimalMax("180") double lon,
-            @RequestParam(defaultValue = "1000") @Min(100) @Max(5000) int radius,
-            @RequestParam(defaultValue = "30") @Min(1) @Max(50) int limit) {
+            @RequestParam(defaultValue = "1000") @Min(100) @Max(3000) int radius,
+            @RequestParam(defaultValue = "100") @Min(1) @Max(300) int limit) {
         return service.nearby(lat, lon, radius, limit);
     }
 }
