@@ -39,6 +39,18 @@ public class PlaceService {
      * чтобы в выборке были и близкие, и дальние, а не только ближайшие
      */
     public List<PlaceResponse> nearby(double lat, double lon, int radiusMeters, int limit) {
+        List<Place> pool = poolNearby(lat, lon, radiusMeters);
+        List<Place> selected = spreadByDistance(pool, lat, lon, limit);
+        return selected.stream().map(p -> PlaceResponse.from(p, lat, lon)).toList();
+    }
+
+    /**
+     * Сырой пул видимых мест в радиусе (до {@link #POOL_CAP}), отсортированный по близости.
+     * Сначала гарантирует покрытие зоны (импорт из Geoapify при первом касании или по TTL),
+     * затем читает из БД. Используется и выдачей мест, и генерацией прогулки — поэтому
+     * триггер импорта живёт здесь, а не дублируется у потребителей
+     */
+    public List<Place> poolNearby(double lat, double lon, int radiusMeters) {
         int cellLat = (int) Math.round(lat * 100);
         int cellLon = (int) Math.round(lon * 100);
 
@@ -51,9 +63,7 @@ public class PlaceService {
             }
         }
 
-        List<Place> pool = repository.findNearby(lat, lon, radiusMeters, POOL_CAP);
-        List<Place> selected = spreadByDistance(pool, lat, lon, limit);
-        return selected.stream().map(p -> PlaceResponse.from(p, lat, lon)).toList();
+        return repository.findNearby(lat, lon, radiusMeters, POOL_CAP);
     }
 
     /**
