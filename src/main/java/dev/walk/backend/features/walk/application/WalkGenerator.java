@@ -24,7 +24,7 @@ import java.util.stream.Collectors;
 /**
  * @author Ilya Samsonov
  * Генерация пешей прогулки от стартовой точки. Берёт пул мест рядом, отбирает
- * 4–6 разнообразных точек под бюджет длительности, оптимизирует порядок обхода
+ * до 6 разнообразных точек под бюджет длительности, оптимизирует порядок обхода
  * (кольцо) и оценивает время. Ничего не сохраняет — это превью (этап 3)
  */
 @Slf4j
@@ -40,6 +40,12 @@ public class WalkGenerator {
      * Минимум, ниже которого прогулку не строим (нечего показывать)
      */
     private static final int MIN_POINTS = 2;
+    /**
+     * Сколько верхних кандидатов из ранжированного списка просматриваем при подборе
+     * маршрута. Этого достаточно, чтобы пропускать неудачные дальние точки, но не
+     * превращать генерацию превью в дорогой перебор всего пула
+     */
+    private static final int CANDIDATE_SCAN_LIMIT = 40;
     /**
      * Допуск к бюджету времени: лучше уложить 4–6 точек с лёгким перебором, чем
      * жёстко обрезать прогулку до пары точек ради точного попадания в минуты
@@ -71,27 +77,63 @@ public class WalkGenerator {
     }
 
     /**
-     * Подбирает количество точек под бюджет времени: наибольший префикс
-     * приоритетного списка, у которого кольцо укладывается в {@code durationMinutes}.
-     * Если даже минимум не влезает — берём минимум (что-то показать важнее)
+     * Подбирает точки под бюджет времени. Список {@code ranked} уже отсортирован по
+     * разнообразию и близости, но отдельная ранняя точка может оказаться слишком
+     * далёкой или долгой. Поэтому не берём простой префикс: просматриваем верхние
+     * кандидаты и добавляем только те, с которыми маршрут остаётся в бюджете.
+     * Если даже две точки не помещаются — отдаём самый короткий маршрут из пары
      */
     private List<Place> chooseRoute(double lat, double lon, List<Place> ranked,
                                     int durationMinutes, boolean returnToStart) {
-        int max = Math.min(MAX_POINTS, ranked.size());
         double budget = durationMinutes * BUDGET_TOLERANCE;
-        List<Place> best = null;
-        for (int k = MIN_POINTS; k <= max; k++) {
-            List<Place> ordered = optimizer.order(lat, lon, ranked.subList(0, k), returnToStart);
+
+        int scan = Math.min(CANDIDATE_SCAN_LIMIT, ranked.size());
+        List<Place> selected = new ArrayList<>(MAX_POINTS);
+        List<Place> best = List.of();
+
+        for (Place candidate : ranked.subList(0, scan)) {
+            if (selected.size() == MAX_POINTS) {
+                break;
+            }
+            List<Place> attempt = new ArrayList<>(selected);
+            attempt.add(candidate);
+            List<Place> ordered = optimizer.order(lat, lon, attempt, returnToStart);
             double minutes = estimateRouteMinutes(lat, lon, ordered, returnToStart);
             if (minutes <= budget) {
-                best = ordered;
-            } else {
-                break; // дальше точек только больше — бюджет уже превышен
+                selected = new ArrayList<>(ordered);
+                if (selected.size() >= MIN_POINTS) {
+                    best = selected;
+                }
             }
         }
-        if (best == null) {
-            // Даже минимум не влезает в бюджет — всё равно отдаём минимум
-            best = optimizer.order(lat, lon, ranked.subList(0, Math.min(MIN_POINTS, ranked.size())), returnToStart);
+
+        if (best.size() >= MIN_POINTS) {
+            return best;
+        }
+        return shortestFallback(lat, lon, ranked.subList(0, scan), returnToStart);
+    }
+
+    /**
+     * Fallback для короткого бюджета или скудного пула: находим самую короткую пару
+     * среди просмотренных кандидатов, а не просто берём первые две ранжированные точки
+     */
+    private List<Place> shortestFallback(double lat, double lon, List<Place> candidates, boolean returnToStart) {
+        if (candidates.size() <= MIN_POINTS) {
+            return optimizer.order(lat, lon, candidates, returnToStart);
+        }
+
+        List<Place> best = List.of(candidates.get(0), candidates.get(1));
+        double bestMinutes = Double.MAX_VALUE;
+        for (int i = 0; i < candidates.size() - 1; i++) {
+            for (int j = i + 1; j < candidates.size(); j++) {
+                List<Place> ordered = optimizer.order(lat, lon, List.of(candidates.get(i), candidates.get(j)),
+                        returnToStart);
+                double minutes = estimateRouteMinutes(lat, lon, ordered, returnToStart);
+                if (minutes < bestMinutes) {
+                    bestMinutes = minutes;
+                    best = ordered;
+                }
+            }
         }
         return best;
     }

@@ -31,7 +31,7 @@ public class RouteOptimizer {
      * обхода (без точки старта)
      */
     public List<Place> order(double startLat, double startLon, List<Place> places, boolean returnToStart) {
-        if (places.size() <= 2) {
+        if (places.size() <= 1) {
             return new ArrayList<>(places);
         }
         return places.size() <= EXACT_MAX_POINTS
