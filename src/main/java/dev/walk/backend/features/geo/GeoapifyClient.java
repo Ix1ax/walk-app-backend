@@ -4,6 +4,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 
 import dev.walk.backend.features.geo.domain.GeoCity;
 import dev.walk.backend.features.geo.domain.GeoPlace;
+import dev.walk.backend.features.geo.domain.GeoPoint;
+import dev.walk.backend.features.geo.domain.GeoRoute;
+import dev.walk.backend.features.geo.domain.RouteGeometry;
+import dev.walk.backend.features.geo.domain.RouteLeg;
+import dev.walk.backend.features.geo.domain.RouteStep;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
@@ -31,17 +36,78 @@ public class GeoapifyClient {
         // JDK HttpClient, но принудительно HTTP/1.1: дефолтный RestClient берёт HTTP/2,
         // у которого под параллельными запросами всплывает TLS BUFFER_UNDERFLOW.
         // HTTP/1.1 это снимает, при этом клиент потокобезопасный и не договаривается о
-        // gzip (чистый JSON). Таймауты — чтобы запрос не висел, а падал предсказуемо
+        // gzip (чистый JSON). Таймауты держим короткими, но не агрессивными:
+        // routing лучше немного подождать, чем часто откатываться на прямые линии
         HttpClient jdkClient = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
-                .connectTimeout(Duration.ofSeconds(2))
+                .connectTimeout(Duration.ofSeconds(5))
                 .build();
         JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(jdkClient);
-        factory.setReadTimeout(Duration.ofSeconds(6));
+        factory.setReadTimeout(Duration.ofSeconds(10));
         this.http = RestClient.builder()
                 .baseUrl(properties.baseUrl())
                 .requestFactory(factory)
                 .build();
+    }
+
+    /**
+     * Строит реальный пеший маршрут по улицам через Geoapify Routing API. Геометрия
+     * возвращается в GeoJSON-порядке координат: [lon, lat]. При отсутствии ключа,
+     * сетевой ошибке или пустом ответе возвращает {@link Optional#empty()}, чтобы
+     * генератор прогулки мог упасть на локальную эвристику
+     */
+    public Optional<GeoRoute> walkingRoute(List<GeoPoint> waypoints) {
+        if (properties.apiKey() == null || properties.apiKey().isBlank()) {
+            log.warn("Geoapify API key не задан — routing пропущен");
+            return Optional.empty();
+        }
+        if (waypoints == null || waypoints.size() < 2) {
+            return Optional.empty();
+        }
+        try {
+            JsonNode body = http.get()
+                    .uri(uri -> uri.path("/v1/routing")
+                            .queryParam("waypoints", routeWaypoints(waypoints))
+                            .queryParam("mode", "walk")
+                            .queryParam("type", "short")
+                            .queryParam("format", "geojson")
+                            .queryParam("lang", "ru")
+                            .queryParam("apiKey", properties.apiKey())
+                            .build())
+                    .retrieve()
+                    .body(JsonNode.class);
+
+            JsonNode features = body == null ? null : body.get("features");
+            if (features == null || !features.isArray() || features.isEmpty()) {
+                return Optional.empty();
+            }
+
+            JsonNode feature = features.get(0);
+            JsonNode props = feature.get("properties");
+            JsonNode geometry = feature.get("geometry");
+            if (props == null || geometry == null || geometry.path("coordinates").isMissingNode()) {
+                return Optional.empty();
+            }
+
+            List<RouteLeg> legs = parseRouteLegs(props);
+            if (legs.size() != waypoints.size() - 1) {
+                log.warn("Geoapify routing вернул {} legs для {} waypoints — используем fallback",
+                        legs.size(), waypoints.size());
+                return Optional.empty();
+            }
+
+            long distanceMeters = Math.round(props.path("distance").asDouble(sumLegDistances(legs)));
+            long timeSeconds = Math.round(props.path("time").asDouble(sumLegSeconds(legs)));
+            return Optional.of(new GeoRoute(
+                    parseRouteGeometry(geometry),
+                    distanceMeters,
+                    timeSeconds,
+                    legs,
+                    false));
+        } catch (Exception e) {
+            log.warn("Geoapify routing не удался: {}", e.getMessage());
+            return Optional.empty();
+        }
     }
 
     /**
@@ -246,5 +312,97 @@ public class GeoapifyClient {
             return null;
         }
         return value.asText();
+    }
+
+    private static String routeWaypoints(List<GeoPoint> waypoints) {
+        List<String> parts = new ArrayList<>(waypoints.size());
+        for (GeoPoint p : waypoints) {
+            parts.add(p.lat() + "," + p.lon());
+        }
+        return String.join("|", parts);
+    }
+
+    private static RouteGeometry parseRouteGeometry(JsonNode geometry) {
+        String type = geometry.path("type").asText("MultiLineString");
+        JsonNode coordinates = geometry.path("coordinates");
+        List<List<List<Double>>> lines = new ArrayList<>();
+        if ("LineString".equals(type)) {
+            lines.add(parseLine(coordinates));
+        } else {
+            for (JsonNode line : coordinates) {
+                lines.add(parseLine(line));
+            }
+        }
+        return new RouteGeometry("MultiLineString", lines);
+    }
+
+    private static List<List<Double>> parseLine(JsonNode line) {
+        List<List<Double>> points = new ArrayList<>();
+        for (JsonNode point : line) {
+            if (point.isArray() && point.size() >= 2) {
+                points.add(List.of(point.get(0).asDouble(), point.get(1).asDouble()));
+            }
+        }
+        return points;
+    }
+
+    private static List<RouteLeg> parseRouteLegs(JsonNode props) {
+        JsonNode legs = props.get("legs");
+        if (legs == null || !legs.isArray() || legs.isEmpty()) {
+            return List.of(new RouteLeg(
+                    Math.round(props.path("distance").asDouble(0)),
+                    Math.round(props.path("time").asDouble(0)),
+                    List.of()));
+        }
+        List<RouteLeg> result = new ArrayList<>(legs.size());
+        for (JsonNode leg : legs) {
+            result.add(new RouteLeg(
+                    Math.round(leg.path("distance").asDouble(0)),
+                    Math.round(leg.path("time").asDouble(0)),
+                    parseRouteSteps(leg)));
+        }
+        return result;
+    }
+
+    private static List<RouteStep> parseRouteSteps(JsonNode leg) {
+        JsonNode steps = leg.get("steps");
+        if (steps == null || !steps.isArray() || steps.isEmpty()) {
+            return List.of();
+        }
+        List<RouteStep> result = new ArrayList<>(steps.size());
+        for (JsonNode step : steps) {
+            result.add(new RouteStep(
+                    Math.round(step.path("distance").asDouble(0)),
+                    Math.round(step.path("time").asDouble(0)),
+                    instructionText(step)));
+        }
+        return result;
+    }
+
+    private static String instructionText(JsonNode step) {
+        JsonNode instruction = step.get("instruction");
+        if (instruction == null || instruction.isNull()) {
+            return null;
+        }
+        if (instruction.isTextual()) {
+            return instruction.asText();
+        }
+        return text(instruction, "text");
+    }
+
+    private static long sumLegDistances(List<RouteLeg> legs) {
+        long total = 0;
+        for (RouteLeg leg : legs) {
+            total += leg.distanceMeters();
+        }
+        return total;
+    }
+
+    private static long sumLegSeconds(List<RouteLeg> legs) {
+        long total = 0;
+        for (RouteLeg leg : legs) {
+            total += leg.timeSeconds();
+        }
+        return total;
     }
 }
