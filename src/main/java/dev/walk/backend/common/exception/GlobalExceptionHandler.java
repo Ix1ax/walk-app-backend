@@ -1,6 +1,5 @@
 package dev.walk.backend.common.exception;
 
-import jakarta.persistence.ElementCollection;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
@@ -37,7 +36,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handleHttpRequestMethodNotSupported(HttpRequestMethodNotSupportedException ex,
                                                                         HttpServletRequest request) {
 
-        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
                 .body(ApiError.of(405, HttpStatus.METHOD_NOT_ALLOWED.toString(), ex.getMessage(), request.getRequestURI()));
     }
 
