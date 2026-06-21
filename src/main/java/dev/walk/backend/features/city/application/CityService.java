@@ -58,19 +58,51 @@ public class CityService {
     }
 
     /**
-     * Сохраняет город из геокодера (или возвращает уже существующий с таким именем)
+     * Сохраняет город из геокодера (или возвращает уже существующий с таким именем).
+     * Имя чистится от административных приставок: «городской округ Тверь» → «Тверь»
      */
     private City importCity(GeoCity geo) {
-        return repository.findByNameIgnoreCase(geo.name())
+        String name = cleanCityName(geo.name());
+        return repository.findByNameIgnoreCase(name)
                 .orElseGet(() -> {
                     City city = new City();
-                    city.setName(geo.name());
-                    city.setSlug(uniqueSlug(geo.name()));
+                    city.setName(name);
+                    city.setSlug(uniqueSlug(name));
                     city.setCountryCode(geo.countryCode() == null ? "RU" : geo.countryCode().toUpperCase());
                     city.setCenterLat(geo.lat());
                     city.setCenterLon(geo.lon());
                     return repository.save(city);
                 });
+    }
+
+    /** Административные приставки, которые Geoapify подмешивает в название города */
+    private static final List<String> ADMIN_PREFIXES = List.of(
+            "городской округ ",
+            "муниципальное образование ",
+            "городское поселение ",
+            "сельское поселение ",
+            "город ");
+
+    /**
+     * Чистит название города от административных приставок:
+     * «городской округ Тверь» → «Тверь». Регистронезависимо, в цикле (вложенные приставки)
+     */
+    private static String cleanCityName(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String s = raw.trim();
+        boolean changed = true;
+        while (changed) {
+            changed = false;
+            for (String prefix : ADMIN_PREFIXES) {
+                if (s.regionMatches(true, 0, prefix, 0, prefix.length())) {
+                    s = s.substring(prefix.length()).trim();
+                    changed = true;
+                }
+            }
+        }
+        return s;
     }
 
     /**
@@ -91,16 +123,35 @@ public class CityService {
     }
 
     /**
-     * Определяет текущий город по координатам: сначала через reverse geocoding
-     * (Geoapify), и если такого города у нас нет — ближайший из поддерживаемых
+     * Определяет текущий город по координатам. Если города нет — 404
      */
+    @Transactional
     public CityResponse current(double lat, double lon) {
-        Optional<City> byName = geoapifyClient.reverseCity(lat, lon)
-                .flatMap(repository::findByNameIgnoreCase);
-        if (byName.isPresent()) {
-            return CityResponse.from(byName.get());
-        }
+        return resolveCity(lat, lon)
+                .map(CityResponse::from)
+                .orElseThrow(() -> new NotFoundException("Город пока не поддерживается"));
+    }
 
+    /**
+     * Город по координатам: reverse geocoding с read-through импортом (как в search).
+     * Если reverse не дал результата — ближайший уже известный город из БД.
+     * Используется для /current и для привязки мест к городу
+     */
+    @Transactional
+    public Optional<City> resolveCity(double lat, double lon) {
+        Optional<GeoCity> geo = geoapifyClient.reverseCity(lat, lon);
+        if (geo.isPresent()) {
+            return Optional.of(importCity(geo.get()));
+        }
+        return findNearest(lat, lon);
+    }
+
+    /**
+     * Ближайший к точке поддерживаемый город из БД (в пределах
+     * {@link #MAX_NEAREST_DISTANCE_METERS}). Чистая операция: только читает БД,
+     * ничего не импортирует. {@link Optional#empty()}, если такого нет
+     */
+    public Optional<City> findNearest(double lat, double lon) {
         City nearest = null;
         double bestDistance = Double.MAX_VALUE;
         for (City city : repository.findAll()) {
@@ -110,10 +161,9 @@ public class CityService {
                 nearest = city;
             }
         }
-
         if (nearest != null && bestDistance <= MAX_NEAREST_DISTANCE_METERS) {
-            return CityResponse.from(nearest);
+            return Optional.of(nearest);
         }
-        throw new NotFoundException("Город пока не поддерживается");
+        return Optional.empty();
     }
 }
