@@ -20,6 +20,7 @@ public record WalkResponse(
         long walkMinutes,
         long dwellMinutes,
         long totalMinutes,
+        RouteResponse route,
         List<WalkPointResponse> points
 ) {
     public static WalkResponse from(Walk walk) {
@@ -37,6 +38,7 @@ public record WalkResponse(
                 walk.walkMinutes(),
                 walk.dwellMinutes(),
                 walk.totalMinutes(),
+                RouteResponse.from(walk.route()),
                 points);
     }
 }

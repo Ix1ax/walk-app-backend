@@ -3,8 +3,12 @@ package dev.walk.backend.features.walk.application;
 import dev.walk.backend.common.exception.NotFoundException;
 import dev.walk.backend.features.city.application.CityService;
 import dev.walk.backend.features.city.domain.City;
+import dev.walk.backend.features.geo.GeoapifyClient;
 import dev.walk.backend.features.geo.domain.GeoDistance;
 import dev.walk.backend.features.geo.domain.GeoPoint;
+import dev.walk.backend.features.geo.domain.GeoRoute;
+import dev.walk.backend.features.geo.domain.RouteGeometry;
+import dev.walk.backend.features.geo.domain.RouteLeg;
 import dev.walk.backend.features.place.application.PlaceEnricher;
 import dev.walk.backend.features.place.application.PlaceService;
 import dev.walk.backend.features.place.domain.Place;
@@ -25,7 +29,8 @@ import java.util.stream.Collectors;
  * @author Ilya Samsonov
  * Генерация пешей прогулки от стартовой точки. Берёт пул мест рядом, отбирает
  * до 6 разнообразных точек под бюджет длительности, оптимизирует порядок обхода
- * (кольцо) и оценивает время. Ничего не сохраняет — это превью (этап 3)
+ * (кольцо), строит реальный пеший маршрут и оценивает время. Ничего не сохраняет
+ * — это превью
  */
 @Slf4j
 @Service
@@ -46,18 +51,13 @@ public class WalkGenerator {
      * превращать генерацию превью в дорогой перебор всего пула
      */
     private static final int CANDIDATE_SCAN_LIMIT = 40;
-    /**
-     * Допуск к бюджету времени: лучше уложить 4–6 точек с лёгким перебором, чем
-     * жёстко обрезать прогулку до пары точек ради точного попадания в минуты
-     */
-    private static final double BUDGET_TOLERANCE = 1.15;
-
     private final PlaceService placeService;
     private final NearbyPlacesSelector selector;
     private final RouteOptimizer optimizer;
     private final WalkTimeEstimator estimator;
     private final PlaceEnricher enricher;
     private final CityService cityService;
+    private final GeoapifyClient geoapifyClient;
 
     public Walk generate(double lat, double lon, int durationMinutes, boolean returnToStart) {
         int searchRadius = searchRadius(durationMinutes);
@@ -85,7 +85,7 @@ public class WalkGenerator {
      */
     private List<Place> chooseRoute(double lat, double lon, List<Place> ranked,
                                     int durationMinutes, boolean returnToStart) {
-        double budget = durationMinutes * BUDGET_TOLERANCE;
+        double budget = durationMinutes;
 
         int scan = Math.min(CANDIDATE_SCAN_LIMIT, ranked.size());
         List<Place> selected = new ArrayList<>(MAX_POINTS);
@@ -139,8 +139,8 @@ public class WalkGenerator {
     }
 
     /**
-     * Собирает доменную прогулку: переходы между точками (с поправкой на улицы),
-     * время пребывания, кольцо с возвратом к старту и суммарные показатели
+     * Собирает доменную прогулку: реальный пеший маршрут по улицам, переходы между
+     * точками, время пребывания, кольцо с возвратом к старту и суммарные показатели
      */
     private Walk build(double lat, double lon, List<Place> route, boolean returnToStart) {
         // Имя города нужно, чтобы исключить его из сопоставления статей Wikipedia
@@ -152,45 +152,39 @@ public class WalkGenerator {
         Map<Long, PlaceMedia> mediaById = route.parallelStream()
                 .collect(Collectors.toConcurrentMap(Place::getId, p -> enricher.enrich(p, cityName)));
 
+        List<GeoPoint> waypoints = routeWaypoints(lat, lon, route, returnToStart);
+        GeoRoute geoRoute = geoapifyClient.walkingRoute(waypoints)
+                .orElseGet(() -> estimatedRoute(waypoints));
+
         List<WalkPoint> points = new ArrayList<>(route.size());
-        long totalMeters = 0;
-        double walkMinutes = 0;
         long dwellMinutes = 0;
 
         double prevLat = lat;
         double prevLon = lon;
         for (int i = 0; i < route.size(); i++) {
             Place p = route.get(i);
-            long legMeters = estimator.legMeters(
-                    GeoDistance.haversineMeters(prevLat, prevLon, p.getLat(), p.getLon()));
-            double legMinutes = estimator.walkMinutes(legMeters);
+            RouteLeg leg = legOrEstimate(geoRoute, i, prevLat, prevLon, p.getLat(), p.getLon());
+            long legMeters = leg.distanceMeters();
+            double legMinutes = leg.timeSeconds() / 60.0;
             int dwell = estimator.dwellMinutes(p.getCategory());
             PlaceMedia media = mediaById.getOrDefault(p.getId(), PlaceMedia.EMPTY);
 
             points.add(new WalkPoint(p, i + 1, legMeters, legMinutes, dwell, media));
-            totalMeters += legMeters;
-            walkMinutes += legMinutes;
             dwellMinutes += dwell;
 
             prevLat = p.getLat();
             prevLon = p.getLon();
         }
-        if (returnToStart) {
-            // Замыкаем кольцо: возврат от последней точки к старту
-            long returnMeters = estimator.legMeters(
-                    GeoDistance.haversineMeters(prevLat, prevLon, lat, lon));
-            totalMeters += returnMeters;
-            walkMinutes += estimator.walkMinutes(returnMeters);
-        }
 
         Long cityId = route.stream().map(Place::getCityId).filter(Objects::nonNull).findFirst().orElse(null);
-        long roundedWalk = Math.round(walkMinutes);
+        long roundedWalk = Math.round(geoRoute.timeSeconds() / 60.0);
         return new Walk(
                 new GeoPoint(lat, lon),
                 cityId,
                 returnToStart,
                 points,
-                totalMeters,
+                geoRoute,
+                geoRoute.distanceMeters(),
                 roundedWalk,
                 dwellMinutes,
                 roundedWalk + dwellMinutes);
@@ -224,5 +218,56 @@ public class WalkGenerator {
      */
     private int searchRadius(int durationMinutes) {
         return Math.max(800, Math.min(3000, durationMinutes * 20));
+    }
+
+    private static List<GeoPoint> routeWaypoints(double lat, double lon, List<Place> route, boolean returnToStart) {
+        List<GeoPoint> waypoints = new ArrayList<>(route.size() + 2);
+        GeoPoint start = new GeoPoint(lat, lon);
+        waypoints.add(start);
+        for (Place p : route) {
+            waypoints.add(new GeoPoint(p.getLat(), p.getLon()));
+        }
+        if (returnToStart) {
+            waypoints.add(start);
+        }
+        return waypoints;
+    }
+
+    private GeoRoute estimatedRoute(List<GeoPoint> waypoints) {
+        List<RouteLeg> legs = new ArrayList<>(Math.max(0, waypoints.size() - 1));
+        List<List<List<Double>>> lines = new ArrayList<>(Math.max(0, waypoints.size() - 1));
+        long totalMeters = 0;
+        double totalSeconds = 0;
+
+        for (int i = 0; i < waypoints.size() - 1; i++) {
+            GeoPoint from = waypoints.get(i);
+            GeoPoint to = waypoints.get(i + 1);
+            long legMeters = estimator.legMeters(
+                    GeoDistance.haversineMeters(from.lat(), from.lon(), to.lat(), to.lon()));
+            long legSeconds = Math.round(estimator.walkMinutes(legMeters) * 60);
+            legs.add(new RouteLeg(legMeters, legSeconds, List.of()));
+            lines.add(List.of(
+                    List.of(from.lon(), from.lat()),
+                    List.of(to.lon(), to.lat())));
+            totalMeters += legMeters;
+            totalSeconds += legSeconds;
+        }
+
+        return new GeoRoute(
+                new RouteGeometry("MultiLineString", lines),
+                totalMeters,
+                Math.round(totalSeconds),
+                legs,
+                true);
+    }
+
+    private RouteLeg legOrEstimate(GeoRoute route, int legIndex,
+                                   double fromLat, double fromLon, double toLat, double toLon) {
+        if (legIndex < route.legs().size()) {
+            return route.legs().get(legIndex);
+        }
+        long legMeters = estimator.legMeters(GeoDistance.haversineMeters(fromLat, fromLon, toLat, toLon));
+        long legSeconds = Math.round(estimator.walkMinutes(legMeters) * 60);
+        return new RouteLeg(legMeters, legSeconds, List.of());
     }
 }

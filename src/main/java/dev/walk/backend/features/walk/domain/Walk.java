@@ -1,6 +1,7 @@
 package dev.walk.backend.features.walk.domain;
 
 import dev.walk.backend.features.geo.domain.GeoPoint;
+import dev.walk.backend.features.geo.domain.GeoRoute;
 
 import java.util.List;
 
@@ -14,7 +15,8 @@ import java.util.List;
  * @param cityId             город прогулки (может быть null, если не определён)
  * @param returnToStart      кольцо (true) или открытый путь без возврата (false)
  * @param points             точки маршрута в порядке обхода
- * @param totalDistanceMeters полная длина маршрута (с возвратом к старту, если кольцо; с поправкой на улицы)
+ * @param route              геометрия и метрики пешего маршрута для карты
+ * @param totalDistanceMeters полная длина маршрута (с возвратом к старту, если кольцо)
  * @param walkMinutes        суммарное время в движении, мин
  * @param dwellMinutes       суммарное время пребывания в точках, мин
  * @param totalMinutes       общая длительность прогулки, мин (движение + пребывание)
@@ -24,6 +26,7 @@ public record Walk(
         Long cityId,
         boolean returnToStart,
         List<WalkPoint> points,
+        GeoRoute route,
         long totalDistanceMeters,
         long walkMinutes,
         long dwellMinutes,
