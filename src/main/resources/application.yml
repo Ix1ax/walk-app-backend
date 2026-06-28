@@ -33,7 +33,10 @@ walk:
     timeout-seconds: ${OVERPASS_TIMEOUT_SECONDS:60}
   geoapify:
     api-key: ${GEOAPIFY_API_KEY:}
-    base-url: https://api.geoapify.com
+    # base-url можно указать на Cloudflare Worker-прокси (запросы из РФ без VPN);
+    # тогда задаётся proxy-token, а ключ Geoapify держит сам воркер
+    base-url: ${GEOAPIFY_BASE_URL:https://api.geoapify.com}
+    proxy-token: ${GEOAPIFY_PROXY_TOKEN:}
 
 management:
   endpoints:

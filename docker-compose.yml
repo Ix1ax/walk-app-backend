@@ -27,7 +27,14 @@ services:
       DB_USERNAME: ${DB_USERNAME:-walk}
       DB_PASSWORD: ${DB_PASSWORD:-walk}
       SERVER_PORT: 8080
+      # Контейнер резолвит воркер (*.workers.dev) часто только в IPv6, а у Docker-bridge
+      # нет IPv6-выхода → Connect timed out. Принуждаем JVM к IPv4
+      JAVA_TOOL_OPTIONS: "-Djava.net.preferIPv4Stack=true"
       GEOAPIFY_API_KEY: ${GEOAPIFY_API_KEY:-}
+      # Cloudflare Worker-прокси для Geoapify (запросы из РФ без VPN). Если не задано —
+      # ходим напрямую в api.geoapify.com
+      GEOAPIFY_BASE_URL: ${GEOAPIFY_BASE_URL:-https://api.geoapify.com}
+      GEOAPIFY_PROXY_TOKEN: ${GEOAPIFY_PROXY_TOKEN:-}
     ports:
       - "${APP_PORT:-8080}:8080"
     volumes:
