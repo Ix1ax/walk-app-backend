@@ -54,6 +54,10 @@ public class Place {
     @Column(nullable = false)
     private boolean hidden;
 
+    /** Значимое место (wikidata/wikipedia/heritage или якорная категория) — приоритет в выборке */
+    @Column(nullable = false)
+    private boolean notable;
+
     /** Когда место последний раз приходило из Geoapify (для пруна «призраков») */
     @Column(name = "last_seen_at", nullable = false)
     private Instant lastSeenAt;
