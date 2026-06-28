@@ -20,7 +20,7 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
      * ST_Distance. Скрытые (закрытые/пожаловались) не отдаём
      */
     @Query(value = """
-            SELECT id, city_id, name, category, lat, lon, external_id, source, hidden, last_seen_at, created_at
+            SELECT id, city_id, name, category, lat, lon, external_id, source, hidden, notable, last_seen_at, created_at
             FROM places
             WHERE hidden = false
               AND ST_DWithin(geom::geography, ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography, :radius)
