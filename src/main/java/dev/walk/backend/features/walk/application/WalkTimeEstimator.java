@@ -26,14 +26,17 @@ public class WalkTimeEstimator {
      * Сколько минут в среднем человек проводит в точке данной категории
      */
     public int dwellMinutes(PlaceCategory category) {
+        // На прогулке точки в основном осматривают на ходу — пребывание короткое,
+        // чтобы бюджет времени вёл именно ХОДЬБА, а не «стоянки» (иначе «2 часа»
+        // превращаются в 30 минут реального хода)
         return switch (category) {
-            case CAFE -> 15;     // короткая остановка по пути, а не полноценный обед
-            case MUSEUM -> 12;   // на прогулке — осмотр снаружи/беглый заход, не часовой визит
-            case PARK -> 12;
-            case RELIGIOUS -> 8;
-            case LANDMARK, SQUARE, STREET -> 6;
-            case VIEWPOINT -> 6;
-            case MONUMENT -> 4;
+            case MUSEUM -> 8;    // беглый осмотр снаружи/у входа, не часовой визит
+            case CAFE -> 7;
+            case PARK -> 6;
+            case RELIGIOUS -> 5;
+            case LANDMARK, SQUARE, VIEWPOINT -> 4;
+            case STREET -> 3;
+            case MONUMENT -> 3;
         };
     }
 

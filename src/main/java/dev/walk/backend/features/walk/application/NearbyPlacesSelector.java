@@ -23,7 +23,10 @@ import java.util.concurrent.ThreadLocalRandom;
  * категории места берутся взвешенно-случайно (ближние вероятнее, но не всегда),
  * и сам порядок категорий случаен. Поэтому повторная генерация из той же точки
  * даёт другой маршрут (точки могут повторяться, набор и последовательность —
- * обычно нет). Близость остаётся в приоритете, так что прогулка не разъезжается
+ * обычно нет). Близость остаётся в приоритете, так что прогулка не разъезжается.
+ * Качество: значимым местам (notable) даётся приоритет, а точки ближе
+ * {@link #MIN_SPACING_METERS} друг к другу схлопываются — чтобы в маршрут не лезли
+ * дубли (node+way одного объекта) и стопки мемориальных табличек
  */
 @Component
 public class NearbyPlacesSelector {
@@ -33,6 +36,16 @@ public class NearbyPlacesSelector {
      * получало бы непропорционально большой вес. Чем больше — тем «ровнее» рандом
      */
     private static final double DISTANCE_SMOOTHING_METERS = 100.0;
+    /**
+     * Множитель веса для значимых мест — приоритет точкам притяжения над случайными
+     * табличками/кафе (мягкий: не исключает остальных, лишь повышает их шанс)
+     */
+    private static final double NOTABLE_WEIGHT_BOOST = 6.0;
+    /**
+     * Минимальное расстояние между отобранными точками (м): ближе — считаем дублем/
+     * стопкой и не берём вторую. Снимает «три памятника в 5 метрах»
+     */
+    private static final double MIN_SPACING_METERS = 50.0;
 
     /**
      * Раскладывает пул в приоритет включения со случайностью: категории чередуются
@@ -53,20 +66,36 @@ public class NearbyPlacesSelector {
         // Случайный порядок категорий — чтобы вперёд выходили разные типы мест
         Collections.shuffle(queues);
 
-        // Round-robin: по одному месту из каждой категории за круг, пока есть что брать
+        // Round-robin: по одному месту из каждой категории за круг, пока есть что брать.
+        // Точки ближе MIN_SPACING к уже выбранным отбрасываем (дубли/стопки)
         List<Place> ranked = new ArrayList<>(pool.size());
         boolean took = true;
         while (took) {
             took = false;
             for (Deque<Place> q : queues) {
                 Place p = q.poll();
-                if (p != null) {
+                if (p == null) {
+                    continue;
+                }
+                took = true;
+                if (!tooClose(p, ranked)) {
                     ranked.add(p);
-                    took = true;
                 }
             }
         }
         return ranked;
+    }
+
+    /**
+     * Есть ли среди уже выбранных точка ближе {@link #MIN_SPACING_METERS} к {@code p}
+     */
+    private static boolean tooClose(Place p, List<Place> chosen) {
+        for (Place c : chosen) {
+            if (GeoDistance.haversineMeters(p.getLat(), p.getLon(), c.getLat(), c.getLon()) < MIN_SPACING_METERS) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -85,6 +114,9 @@ public class NearbyPlacesSelector {
             // изредка попадают (нужно разнообразие), но прогулка не разъезжается
             double base = dist + DISTANCE_SMOOTHING_METERS;
             double weight = 1.0 / (base * base);
+            if (p.isNotable()) {
+                weight *= NOTABLE_WEIGHT_BOOST; // приоритет точкам притяжения
+            }
             double u = rnd.nextDouble();
             double key = Math.pow(u, 1.0 / weight); // больший вес → key ближе к 1 → раньше
             keyed.add(new Keyed(p, key));
