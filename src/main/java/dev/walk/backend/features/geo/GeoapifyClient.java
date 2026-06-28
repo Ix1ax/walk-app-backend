@@ -13,6 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.util.UriBuilder;
 
 import java.net.http.HttpClient;
 import java.time.Duration;
@@ -30,9 +31,12 @@ public class GeoapifyClient {
 
     private final GeoapifyProperties properties;
     private final RestClient http;
+    /** Запросы идут через воркер-прокси: ключ держит воркер, мы шлём токен и НЕ светим apiKey */
+    private final boolean proxy;
 
     public GeoapifyClient(GeoapifyProperties properties) {
         this.properties = properties;
+        this.proxy = usesProxy(properties);
         // JDK HttpClient, но принудительно HTTP/1.1: дефолтный RestClient берёт HTTP/2,
         // у которого под параллельными запросами всплывает TLS BUFFER_UNDERFLOW.
         // HTTP/1.1 это снимает, при этом клиент потокобезопасный и не договаривается о
@@ -44,10 +48,33 @@ public class GeoapifyClient {
                 .build();
         JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(jdkClient);
         factory.setReadTimeout(Duration.ofSeconds(10));
-        this.http = RestClient.builder()
+        RestClient.Builder builder = RestClient.builder()
                 .baseUrl(properties.baseUrl())
-                .requestFactory(factory)
-                .build();
+                .requestFactory(factory);
+        if (proxy) {
+            builder.defaultHeader("X-Walkly-Proxy-Token", properties.proxyToken());
+        }
+        this.http = builder.build();
+        log.info("Geoapify client: base={}, proxy={}", properties.baseUrl(), proxy);
+    }
+
+    /** Прокси активен, если задан токен и base-url — не сам Geoapify (значит, это воркер) */
+    private static boolean usesProxy(GeoapifyProperties p) {
+        String base = p.baseUrl() == null ? "" : p.baseUrl();
+        return p.proxyToken() != null && !p.proxyToken().isBlank() && !base.contains("api.geoapify.com");
+    }
+
+    /** Есть чем авторизоваться: либо прокси-токен, либо прямой apiKey */
+    private boolean hasCredentials() {
+        return proxy || (properties.apiKey() != null && !properties.apiKey().isBlank());
+    }
+
+    /** Добавляет apiKey в URL только при прямом доступе; через воркер ключ подставляет он сам */
+    private UriBuilder withApiKey(UriBuilder b) {
+        if (!proxy) {
+            b.queryParam("apiKey", properties.apiKey());
+        }
+        return b;
     }
 
     /**
@@ -57,8 +84,8 @@ public class GeoapifyClient {
      * генератор прогулки мог упасть на локальную эвристику
      */
     public Optional<GeoRoute> walkingRoute(List<GeoPoint> waypoints) {
-        if (properties.apiKey() == null || properties.apiKey().isBlank()) {
-            log.warn("Geoapify API key не задан — routing пропущен");
+        if (!hasCredentials()) {
+            log.warn("Geoapify не настроен (нет ключа/прокси) — routing пропущен");
             return Optional.empty();
         }
         if (waypoints == null || waypoints.size() < 2) {
@@ -66,14 +93,12 @@ public class GeoapifyClient {
         }
         try {
             JsonNode body = http.get()
-                    .uri(uri -> uri.path("/v1/routing")
+                    .uri(uri -> withApiKey(uri.path("/v1/routing")
                             .queryParam("waypoints", routeWaypoints(waypoints))
                             .queryParam("mode", "walk")
                             .queryParam("type", "short")
                             .queryParam("format", "geojson")
-                            .queryParam("lang", "ru")
-                            .queryParam("apiKey", properties.apiKey())
-                            .build())
+                            .queryParam("lang", "ru")).build())
                     .retrieve()
                     .body(JsonNode.class);
 
@@ -115,20 +140,18 @@ public class GeoapifyClient {
      * ошибке сети или пустом ответе — {@link Optional#empty()}
      */
     public Optional<GeoCity> reverseCity(double lat, double lon) {
-        if (properties.apiKey() == null || properties.apiKey().isBlank()) {
-            log.warn("Geoapify API key не задан — reverse geocoding пропущен");
+        if (!hasCredentials()) {
+            log.warn("Geoapify не настроен (нет ключа/прокси) — reverse geocoding пропущен");
             return Optional.empty();
         }
         try {
             JsonNode body = http.get()
-                    .uri(uri -> uri.path("/v1/geocode/reverse")
+                    .uri(uri -> withApiKey(uri.path("/v1/geocode/reverse")
                             .queryParam("lat", lat)
                             .queryParam("lon", lon)
                             .queryParam("type", "city")
                             .queryParam("lang", "ru")
-                            .queryParam("format", "json")
-                            .queryParam("apiKey", properties.apiKey())
-                            .build())
+                            .queryParam("format", "json")).build())
                     .retrieve()
                     .body(JsonNode.class);
 
@@ -161,21 +184,19 @@ public class GeoapifyClient {
      * ошибке или если ничего не найдено
      */
     public Optional<GeoCity> searchCity(String query) {
-        if (properties.apiKey() == null || properties.apiKey().isBlank()) {
-            log.warn("Geoapify API key не задан — поиск города пропущен");
+        if (!hasCredentials()) {
+            log.warn("Geoapify не настроен (нет ключа/прокси) — поиск города пропущен");
             return Optional.empty();
         }
         try {
             JsonNode body = http.get()
-                    .uri(uri -> uri.path("/v1/geocode/search")
+                    .uri(uri -> withApiKey(uri.path("/v1/geocode/search")
                             .queryParam("text", query)
                             .queryParam("type", "city")
                             .queryParam("format", "json")
                             .queryParam("lang", "ru")
                             .queryParam("bias", "countrycode:ru")
-                            .queryParam("limit", 1)
-                            .queryParam("apiKey", properties.apiKey())
-                            .build())
+                            .queryParam("limit", 1)).build())
                     .retrieve()
                     .body(JsonNode.class);
 
@@ -215,20 +236,18 @@ public class GeoapifyClient {
      * ключа, ошибке или если ничего не найдено
      */
     public List<GeoPlace> searchPlaces(double lat, double lon, int radiusMeters, List<String> categories, int limit) {
-        if (properties.apiKey() == null || properties.apiKey().isBlank()) {
-            log.warn("Geoapify API key не задан — поиск мест пропущен");
+        if (!hasCredentials()) {
+            log.warn("Geoapify не настроен (нет ключа/прокси) — поиск мест пропущен");
             return List.of();
         }
         try {
             JsonNode body = http.get()
-                    .uri(uri -> uri.path("/v2/places")
+                    .uri(uri -> withApiKey(uri.path("/v2/places")
                             .queryParam("categories", String.join(",", categories))
                             .queryParam("filter", "circle:" + lon + "," + lat + "," + radiusMeters)
                             .queryParam("bias", "proximity:" + lon + "," + lat)
                             .queryParam("lang", "ru")
-                            .queryParam("limit", limit)
-                            .queryParam("apiKey", properties.apiKey())
-                            .build())
+                            .queryParam("limit", limit)).build())
                     .retrieve()
                     .body(JsonNode.class);
 
