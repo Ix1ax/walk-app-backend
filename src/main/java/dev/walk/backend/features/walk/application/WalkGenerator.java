@@ -20,17 +20,22 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
 /**
  * @author Ilya Samsonov
- * Генерация пешей прогулки от стартовой точки. Берёт пул мест рядом, отбирает
- * до 6 разнообразных точек под бюджет длительности, оптимизирует порядок обхода
- * (кольцо), строит реальный пеший маршрут и оценивает время. Ничего не сохраняет
- * — это превью
+ * Генерация пешей прогулки от стартовой точки. Берёт пул мест рядом, набирает
+ * точки с разбросом по кольцам расстояния (число и радиус растут с бюджетом, чтобы
+ * реальная длина прогулки соответствовала запросу), оптимизирует порядок обхода
+ * (кольцо/открытый путь), строит реальный пеший маршрут и оценивает время. Ничего
+ * не сохраняет — это превью
  */
 @Slf4j
 @Service
@@ -38,19 +43,40 @@ import java.util.stream.Collectors;
 public class WalkGenerator {
 
     /**
-     * Желаемый максимум точек в прогулке
+     * Потолок числа точек (длинные прогулки набирают больше остановок)
      */
-    private static final int MAX_POINTS = 6;
+    private static final int MAX_POINTS = 10;
     /**
      * Минимум, ниже которого прогулку не строим (нечего показывать)
      */
     private static final int MIN_POINTS = 2;
     /**
-     * Сколько верхних кандидатов из ранжированного списка просматриваем при подборе
-     * маршрута. Этого достаточно, чтобы пропускать неудачные дальние точки, но не
-     * превращать генерацию превью в дорогой перебор всего пула
+     * Сколько минут бюджета приходится на одну точку — из этого считаем, сколько
+     * остановок набрать (длиннее прогулка → больше точек)
      */
-    private static final int CANDIDATE_SCAN_LIMIT = 40;
+    private static final double MINUTES_PER_POINT = 16.0;
+    /**
+     * Множитель веса notable-мест при случайном выборе внутри кольца расстояния
+     */
+    private static final double NOTABLE_PICK_BOOST = 3.0;
+    /**
+     * Радиус сбора пула (макс. покрытие зоны). Радиус разброса точек под конкретный
+     * бюджет калибруется внутри этого предела
+     */
+    private static final int POOL_RADIUS_METERS = 3000;
+    /**
+     * Доля бюджета, в которую целимся оценкой. Реальный пеший маршрут по улицам
+     * длиннее нашей оценки (прямая×1.3), причём для длинных многоэтапных маршрутов
+     * сильнее — поэтому фактор УБЫВАЕТ с числом точек: {@code BASE - SLOPE*(points-2)}
+     */
+    private static final double TARGET_FACTOR_BASE = 0.95;
+    private static final double TARGET_FACTOR_SLOPE = 0.035;
+    /**
+     * Сколько случайных финальных раскладок пробуем, выбирая лучшую по бюджету —
+     * режет «разъехавшиеся» маршруты, сохраняя вариативность
+     */
+    private static final int FINAL_TRIES = 8;
+
     private final PlaceService placeService;
     private final NearbyPlacesSelector selector;
     private final RouteOptimizer optimizer;
@@ -60,8 +86,7 @@ public class WalkGenerator {
     private final GeoapifyClient geoapifyClient;
 
     public Walk generate(double lat, double lon, int durationMinutes, boolean returnToStart) {
-        int searchRadius = searchRadius(durationMinutes);
-        List<Place> pool = placeService.poolNearby(lat, lon, searchRadius);
+        List<Place> pool = placeService.poolNearby(lat, lon, POOL_RADIUS_METERS);
         if (pool.size() < MIN_POINTS) {
             throw new NotFoundException("Недостаточно мест рядом, чтобы построить прогулку");
         }
@@ -77,65 +102,166 @@ public class WalkGenerator {
     }
 
     /**
-     * Подбирает точки под бюджет времени. Список {@code ranked} уже отсортирован по
-     * разнообразию и близости, но отдельная ранняя точка может оказаться слишком
-     * далёкой или долгой. Поэтому не берём простой префикс: просматриваем верхние
-     * кандидаты и добавляем только те, с которыми маршрут остаётся в бюджете.
-     * Если даже две точки не помещаются — отдаём самый короткий маршрут из пары
+     * Подбирает точки так, чтобы РЕАЛЬНАЯ длина прогулки масштабировалась с бюджетом
+     * (а не добивалась «стоянками»). Число точек растёт с бюджетом, а сами точки
+     * разносятся по кольцам расстояния [0..radius] — поэтому длинная прогулка идёт
+     * широким кольцом и физически занимает больше времени. Внутри кольца точка
+     * берётся случайно (с приоритетом notable) — отсюда разные маршруты при повторе
      */
     private List<Place> chooseRoute(double lat, double lon, List<Place> ranked,
                                     int durationMinutes, boolean returnToStart) {
-        double budget = durationMinutes;
+        int targetPoints = clamp((int) Math.round(durationMinutes / MINUTES_PER_POINT), MIN_POINTS, MAX_POINTS);
+        double factor = Math.max(0.7, Math.min(0.95, TARGET_FACTOR_BASE - TARGET_FACTOR_SLOPE * (targetPoints - 2)));
+        double target = durationMinutes * factor;
 
-        int scan = Math.min(CANDIDATE_SCAN_LIMIT, ranked.size());
-        List<Place> selected = new ArrayList<>(MAX_POINTS);
-        List<Place> best = List.of();
-
-        for (Place candidate : ranked.subList(0, scan)) {
-            if (selected.size() == MAX_POINTS) {
-                break;
-            }
-            List<Place> attempt = new ArrayList<>(selected);
-            attempt.add(candidate);
-            List<Place> ordered = optimizer.order(lat, lon, attempt, returnToStart);
-            double minutes = estimateRouteMinutes(lat, lon, ordered, returnToStart);
-            if (minutes <= budget) {
-                selected = new ArrayList<>(ordered);
-                if (selected.size() >= MIN_POINTS) {
-                    best = selected;
-                }
+        // Калибруем радиус разброса так, чтобы оценочное время прогулки ≈ бюджету:
+        // больше радиус → шире кольцо → длиннее путь. Бинарный поиск по детерминированному
+        // разбросу (без случайности, чтобы оценка была стабильной)
+        double lo = 200;
+        double hi = POOL_RADIUS_METERS;
+        double chosenR = lo;
+        for (int it = 0; it < 8; it++) {
+            double r = (lo + hi) / 2;
+            List<Place> probe = optimizer.order(lat, lon,
+                    pickSpread(lat, lon, ranked, targetPoints, r, false), returnToStart);
+            if (estimateTotalMinutes(lat, lon, probe, returnToStart) > target) {
+                hi = r;
+            } else {
+                lo = r;
+                chosenR = r;
             }
         }
 
-        if (best.size() >= MIN_POINTS) {
-            return best;
+        // Финальный набор: пробуем несколько случайных раскладок на найденном радиусе
+        // и берём лучшую по попаданию в бюджет (перелёт штрафуем сильнее). Так
+        // сохраняется вариативность, но отсекаются «разъехавшиеся» наборы
+        List<Place> best = null;
+        double bestErr = Double.MAX_VALUE;
+        for (int k = 0; k < FINAL_TRIES; k++) {
+            List<Place> spread = pickSpread(lat, lon, ranked, targetPoints, chosenR, true);
+            if (spread.size() < MIN_POINTS) {
+                continue;
+            }
+            List<Place> ordered = optimizer.order(lat, lon, spread, returnToStart);
+            double est = estimateTotalMinutes(lat, lon, ordered, returnToStart);
+            // Целимся в тот же target, что и калибровка (реальный маршрут длиннее оценки);
+            // перелёт штрафуем сильнее
+            double err = est <= target ? (target - est) : (est - target) * 2.0;
+            if (err < bestErr) {
+                bestErr = err;
+                best = ordered;
+            }
         }
-        return shortestFallback(lat, lon, ranked.subList(0, scan), returnToStart);
+        if (best == null) {
+            best = optimizer.order(lat, lon, ranked.subList(0, Math.min(MIN_POINTS, ranked.size())), returnToStart);
+        }
+        return best;
     }
 
     /**
-     * Fallback для короткого бюджета или скудного пула: находим самую короткую пару
-     * среди просмотренных кандидатов, а не просто берём первые две ранжированные точки
+     * Оценочная длительность маршрута (ходьба прямая×1.3 + пребывание), для калибровки
+     * радиуса. Реальное время в ответе считается потом по настоящему пешему маршруту
      */
-    private List<Place> shortestFallback(double lat, double lon, List<Place> candidates, boolean returnToStart) {
-        if (candidates.size() <= MIN_POINTS) {
-            return optimizer.order(lat, lon, candidates, returnToStart);
+    private double estimateTotalMinutes(double lat, double lon, List<Place> ordered, boolean returnToStart) {
+        double minutes = 0;
+        double prevLat = lat;
+        double prevLon = lon;
+        for (Place p : ordered) {
+            long legMeters = estimator.legMeters(GeoDistance.haversineMeters(prevLat, prevLon, p.getLat(), p.getLon()));
+            minutes += estimator.walkMinutes(legMeters) + estimator.dwellMinutes(p.getCategory());
+            prevLat = p.getLat();
+            prevLon = p.getLon();
         }
+        if (returnToStart) {
+            minutes += estimator.walkMinutes(
+                    estimator.legMeters(GeoDistance.haversineMeters(prevLat, prevLon, lat, lon)));
+        }
+        return minutes;
+    }
 
-        List<Place> best = List.of(candidates.get(0), candidates.get(1));
-        double bestMinutes = Double.MAX_VALUE;
-        for (int i = 0; i < candidates.size() - 1; i++) {
-            for (int j = i + 1; j < candidates.size(); j++) {
-                List<Place> ordered = optimizer.order(lat, lon, List.of(candidates.get(i), candidates.get(j)),
-                        returnToStart);
-                double minutes = estimateRouteMinutes(lat, lon, ordered, returnToStart);
-                if (minutes < bestMinutes) {
-                    bestMinutes = minutes;
-                    best = ordered;
-                }
+    /**
+     * Выбирает до {@code n} точек, разнесённых по кольцам расстояния от старта: делим
+     * [0..radius] на n полос и из каждой берём одну точку (взвешенно-случайно, notable
+     * вероятнее). Пустые полосы добиваем ближайшими свободными. Так маршрут охватывает
+     * нужный радиус, остаётся разнообразным и каждый раз другим
+     */
+    private List<Place> pickSpread(double lat, double lon, List<Place> candidates, int n, double radius, boolean random) {
+        record Cand(Place place, double dist) {
+        }
+        List<Cand> cs = new ArrayList<>();
+        for (Place p : candidates) {
+            double d = GeoDistance.haversineMeters(lat, lon, p.getLat(), p.getLon());
+            if (d <= radius) {
+                cs.add(new Cand(p, d));
             }
         }
-        return best;
+        if (cs.size() <= n) {
+            return cs.stream().map(Cand::place).toList();
+        }
+
+        ThreadLocalRandom rnd = ThreadLocalRandom.current();
+        double band = radius / (double) n;
+        List<Place> chosen = new ArrayList<>(n);
+        Set<Place> used = new HashSet<>();
+        for (int i = 0; i < n; i++) {
+            double lo = i * band;
+            double hi = (i + 1) * band;
+            List<Place> inBand = new ArrayList<>();
+            for (Cand c : cs) {
+                if (!used.contains(c.place()) && c.dist() >= lo && c.dist() < hi) {
+                    inBand.add(c.place());
+                }
+            }
+            if (inBand.isEmpty()) {
+                continue;
+            }
+            // random — для итогового набора (вариативность); иначе детерминированно
+            // (для стабильной калибровки): notable вперёд, затем ближе к центру кольца
+            Place pick;
+            if (random) {
+                pick = weightedRandomNotable(inBand, rnd);
+            } else {
+                double center = lo + band / 2;
+                pick = inBand.stream()
+                        .min(Comparator.<Place>comparingInt(p -> p.isNotable() ? 0 : 1)
+                                .thenComparingDouble(p -> Math.abs(
+                                        GeoDistance.haversineMeters(lat, lon, p.getLat(), p.getLon()) - center)))
+                        .orElseThrow();
+            }
+            chosen.add(pick);
+            used.add(pick);
+        }
+        // Пустые полосы → набрали меньше n: добиваем ближайшими свободными
+        if (chosen.size() < n) {
+            cs.stream()
+                    .filter(c -> !used.contains(c.place()))
+                    .sorted(Comparator.comparingDouble(Cand::dist))
+                    .limit((long) n - chosen.size())
+                    .forEach(c -> chosen.add(c.place()));
+        }
+        return chosen;
+    }
+
+    /**
+     * Случайный выбор места из списка с уклоном к notable ({@link #NOTABLE_PICK_BOOST})
+     */
+    private static Place weightedRandomNotable(List<Place> places, ThreadLocalRandom rnd) {
+        double total = 0;
+        for (Place p : places) {
+            total += p.isNotable() ? NOTABLE_PICK_BOOST : 1.0;
+        }
+        double r = rnd.nextDouble(total);
+        for (Place p : places) {
+            r -= p.isNotable() ? NOTABLE_PICK_BOOST : 1.0;
+            if (r < 0) {
+                return p;
+            }
+        }
+        return places.get(places.size() - 1);
+    }
+
+    private static int clamp(int v, int min, int max) {
+        return Math.max(min, Math.min(max, v));
     }
 
     /**
@@ -188,36 +314,6 @@ public class WalkGenerator {
                 roundedWalk,
                 dwellMinutes,
                 roundedWalk + dwellMinutes);
-    }
-
-    /**
-     * Оценка длительности маршрута (мин) для заданного порядка точек — с возвратом
-     * к старту, если кольцо. Используется при подборе количества точек
-     */
-    private double estimateRouteMinutes(double lat, double lon, List<Place> ordered, boolean returnToStart) {
-        double minutes = 0;
-        double prevLat = lat;
-        double prevLon = lon;
-        for (Place p : ordered) {
-            long legMeters = estimator.legMeters(
-                    GeoDistance.haversineMeters(prevLat, prevLon, p.getLat(), p.getLon()));
-            minutes += estimator.walkMinutes(legMeters) + estimator.dwellMinutes(p.getCategory());
-            prevLat = p.getLat();
-            prevLon = p.getLon();
-        }
-        if (returnToStart) {
-            long returnMeters = estimator.legMeters(GeoDistance.haversineMeters(prevLat, prevLon, lat, lon));
-            minutes += estimator.walkMinutes(returnMeters);
-        }
-        return minutes;
-    }
-
-    /**
-     * Радиус сбора кандидатов из бюджета времени: чем длиннее прогулка, тем шире
-     * ищем. Ограничен снизу и сверху, чтобы пул был и непустым, и не разъезжался
-     */
-    private int searchRadius(int durationMinutes) {
-        return Math.max(800, Math.min(3000, durationMinutes * 20));
     }
 
     private static List<GeoPoint> routeWaypoints(double lat, double lon, List<Place> route, boolean returnToStart) {
