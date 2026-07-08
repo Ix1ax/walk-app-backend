@@ -27,6 +27,10 @@ services:
       DB_USERNAME: ${DB_USERNAME:-walk}
       DB_PASSWORD: ${DB_PASSWORD:-walk}
       SERVER_PORT: 8080
+      # JWT: в проде задать свой секрет (≥32 байт) через .env. Дефолт — только для
+      # локалки (пустую строку не передаём: пустой секрет уронил бы старт)
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me-super-secret-key-32bytes-minimum!!}
+      JWT_TTL_HOURS: ${JWT_TTL_HOURS:-720}
       # Источник мест: osm (Overpass, бесплатно, но публичный инстанс медленный —
       # импорт зоны до 50с) или geoapify (через прокси ~1с на категорию, параллельно)
       PLACES_SOURCE: ${PLACES_SOURCE:-osm}
