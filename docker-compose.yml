@@ -27,6 +27,9 @@ services:
       DB_USERNAME: ${DB_USERNAME:-walk}
       DB_PASSWORD: ${DB_PASSWORD:-walk}
       SERVER_PORT: 8080
+      # Источник мест: osm (Overpass, бесплатно, но публичный инстанс медленный —
+      # импорт зоны до 50с) или geoapify (через прокси ~1с на категорию, параллельно)
+      PLACES_SOURCE: ${PLACES_SOURCE:-osm}
       # Контейнер резолвит воркер (*.workers.dev) часто только в IPv6, а у Docker-bridge
       # нет IPv6-выхода → Connect timed out. Принуждаем JVM к IPv4
       JAVA_TOOL_OPTIONS: "-Djava.net.preferIPv4Stack=true"
